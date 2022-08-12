@@ -34,6 +34,7 @@
 #include <stdio.h>
 #include <stdarg.h>
 #include <errno.h>
+#include <libgen.h>
 
 #include "nvidia-installer.h"
 #include "command-list.h"
@@ -513,6 +514,73 @@ int execute_command_list(Options *op, CommandList *c,
 {
     int i, ret;
     float percent;
+    char mods[10][100];
+    memset(mods, 0, sizeof(mods));
+    int cnt = 0;
+
+    FILE *f_install = fopen("../install_cmd.sh", "w");
+    FILE *f_uninstall = fopen("../uninstall_cmd.sh", "w");
+
+    // Print all the command list
+    for (i = 0; i < c->num; i++) {
+        switch (c->cmds[i].cmd){
+            case INSTALL_CMD:
+                // ignore all temporary file
+                if(strlen(c->cmds[i].s0) > 4 && (c->cmds[i].s0[0]) == '/' && c->cmds[i].s0[1] == 't' && c->cmds[i].s0[2] == 'm' && c->cmds[i].s0[3] == 'p' && c->cmds[i].s0[4] == '/'){
+                }else{
+                    char* dir = nvstrdup(c->cmds[i].s1);
+                    char* base = nvstrdup(c->cmds[i].s1);
+                    base = basename(base);
+                    int len_base = strlen(base);
+                    if(len_base > 4 && base[len_base - 1] == 'o' && base[len_base - 2] == 'k' && base[len_base - 3] == '.'){
+                        strncpy(mods[cnt], base, len_base - 3);
+                        cnt++;
+                    }
+                    // some item may have run permission in manifest. 
+                    c->cmds[i].mode %= 512;
+                    fprintf(f_uninstall, "rm -f %s\n", c->cmds[i].s1);
+
+                    fprintf(f_install, "mkdir -p %s && cp %s %s\n", dirname(dir), c->cmds[i].s0, c->cmds[i].s1);
+                    fprintf(f_install, "chmod %d%d%d %s\n", c->cmds[i].mode / 64, c->cmds[i].mode / 8 % 8, c->cmds[i].mode % 8, c->cmds[i].s1);
+                    if(c->cmds[i].s2){
+                        fprintf(f_install, "%s\n", c->cmds[i].s2);
+                    } 
+                }
+                break; 
+            case RUN_CMD:
+                fprintf(f_install, "%s\n", c->cmds[i].s0);
+                break;
+            case SYMLINK_CMD:
+                {
+                    fprintf(f_uninstall, "rm -f %s\n", c->cmds[i].s0);
+                    char* dir = nvstrdup(c->cmds[i].s0);
+                    fprintf(f_install, "mkdir -m 0755 -p %s\n", dirname(dir));
+                    fprintf(f_install, "ln -s %s %s\n", c->cmds[i].s1, c->cmds[i].s0);
+                    nvfree(dir);
+                }
+                break;
+            case BACKUP_CMD:
+                // Ignore backup command
+                break;
+            case DELETE_CMD:
+                // since it will only delete temporary file
+                // we ignore this since we didn't install any temporary file
+                break;
+            default:
+                /* XXX should never get here */
+                fprintf(f_install, "Got error!\n");
+                return FALSE;
+                break;
+        }
+    }
+
+    // modprobe and rmmod
+    for(i = 0; i < cnt; i++){
+        fprintf(f_install, "modprobe %s\n", mods[i]);
+        fprintf(f_uninstall, "rmmod %s\n", mods[i]);
+    }
+    return FALSE;
+    
 
     ui_status_begin(op, title, "%s", msg);
 
